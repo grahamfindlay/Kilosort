@@ -71,30 +71,9 @@ def assign_iclust(rows_neigh, isub, kn, tones2, nclust, lam, m, ki, kj,
     n_spikes = kn.shape[0]
     if chunk is not None and chunk < 1:
         raise ValueError(f'`chunk` must be None or a positive integer, but got {chunk!r}')
+    if chunk is None:
+        chunk = max(n_spikes, 1)
 
-    # Single-shot path: Used when chunking is disabled (chunk is None) or the center is already small.
-    if chunk is None or n_spikes <= chunk:
-        ij = torch.vstack((rows_neigh.flatten(), isub[kn].flatten()))
-        xN = coo(ij, tones2.flatten(), (n_spikes, nclust))
-        xN = xN.to_dense()
-
-        if lam > 0:
-            tones = torch.ones(len(kj), device = device)
-            tzeros = torch.zeros(len(kj), device = device)
-            ij = torch.vstack((tzeros, isub))
-            kN = coo(ij, tones, (1, nclust))
-
-            xN = xN - lam/m * (ki.unsqueeze(-1) * kN.to_dense())
-
-        iclust = torch.argmax(xN, 1)
-
-        return iclust
-
-    # Memory-bounded path: build the (n_spikes x nclust) vote matrix in row chunks
-    # instead of all at once. Each spike's row -- and therefore its argmax -- depends
-    # only on that spike's neighbors and ki, and no row is split across a chunk
-    # boundary, so the result is identical to the single-shot/unchunked path. 
-    # Peak clustering memory drops to one (chunk x nclust) tile.
     if lam > 0:
         tones = torch.ones(len(kj), device = device)
         tzeros = torch.zeros(len(kj), device = device)
@@ -108,6 +87,7 @@ def assign_iclust(rows_neigh, isub, kn, tones2, nclust, lam, m, ki, kj,
         # so this chunk's vote matrix has shape (b-a, nclust).
         ij = torch.vstack(((rows_neigh[a:b] - a).flatten(), isub[kn[a:b]].flatten()))
         xN = coo(ij, tones2[a:b].flatten(), (b - a, nclust)).to_dense()
+        del ij
         if lam > 0:
             xN = xN - lam/m * (ki[a:b].unsqueeze(-1) * kN)
         iclust[a:b] = torch.argmax(xN, 1)
@@ -460,7 +440,7 @@ def run(ops, st, tF, mode='template', device=torch.device('cuda'),
     n_neigh = ops['settings']['cluster_neighbors']
     max_sub = ops['settings']['max_cluster_subset']
     seed = ops['settings']['cluster_init_seed']
-    chunk = ops['settings'].get('clustering_chunk_size', None)
+    chunk = ops['settings']['clustering_chunk_size']
     ycent = y_centers(ops)
     xcent = x_centers(ops)
     nsp = st.shape[0]

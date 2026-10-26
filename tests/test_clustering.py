@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 import torch
+from torch import sparse_coo_tensor as coo
 
 from kilosort import DEFAULT_SETTINGS
 from kilosort.clustering_qr import assign_iclust, x_centers
@@ -28,11 +29,25 @@ def _synth_assign_inputs(n_spikes, nsub, nclust, n_neigh, seed, device):
     return rows_neigh, isub, kn, tones2, ki, kj, m
 
 
+def _unchunked_assign_iclust(rows_neigh, isub, kn, tones2, nclust, lam, m, ki,
+                             kj, device):
+    """Reference copy of ``assign_iclust`` as it was before chunking."""
+    n_spikes = kn.shape[0]
+    ij = torch.vstack((rows_neigh.flatten(), isub[kn].flatten()))
+    xN = coo(ij, tones2.flatten(), (n_spikes, nclust)).to_dense()
+    if lam > 0:
+        tones = torch.ones(len(kj), device=device)
+        tzeros = torch.zeros(len(kj), device=device)
+        kN = coo(torch.vstack((tzeros, isub)), tones, (1, nclust))
+        xN = xN - lam/m * (ki.unsqueeze(-1) * kN.to_dense())
+    return torch.argmax(xN, 1)
+
+
 class TestAssignIclustChunking:
     """The chunked ``assign_iclust`` path must be identical to the unchunked path."""
 
     @pytest.mark.parametrize("lam", [0, 1])
-    @pytest.mark.parametrize("chunk", [1, 7, 333, 999, 1000, 1024, 5000, 5001])
+    @pytest.mark.parametrize("chunk", [None, 1, 7, 333, 999, 1000, 1024, 5000, 5001])
     def test_chunked_matches_unchunked(self, lam, chunk):
         device = torch.device("cpu")
         n_spikes, nsub, nclust, n_neigh = 5000, 800, 60, 10
@@ -40,9 +55,8 @@ class TestAssignIclustChunking:
             n_spikes, nsub, nclust, n_neigh, seed=0, device=device
         )
 
-        full = assign_iclust(
-            rows_neigh, isub, kn, tones2, nclust, lam, m, ki, kj,
-            device=device, chunk=None,
+        full = _unchunked_assign_iclust(
+            rows_neigh, isub, kn, tones2, nclust, lam, m, ki, kj, device=device,
         )
         chunked = assign_iclust(
             rows_neigh, isub, kn, tones2, nclust, lam, m, ki, kj,
@@ -51,8 +65,8 @@ class TestAssignIclustChunking:
 
         assert chunked.shape == full.shape
         assert chunked.dtype == full.dtype
-        # chunk >= n_spikes falls through to the fast path; smaller chunks exercise
-        # the row loop (including a ragged final chunk for non-divisor sizes).
+        # None or chunk >= n_spikes takes a single pass; smaller chunks take
+        # several (including a ragged final chunk for non-divisor sizes).
         assert torch.equal(full, chunked)
 
     @pytest.mark.parametrize("chunk", [0, -1])

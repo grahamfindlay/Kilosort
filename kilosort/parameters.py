@@ -466,17 +466,17 @@ EXTRA_PARAMETERS = {
 
     'clustering_chunk_size': {
         'gui_name': 'clustering chunk size', 'type': int, 'min': 1, 'max': np.inf,
-        'exclude': [], 'default': None, 'step': 'clustering',
+        'exclude': [], 'default': 2**18, 'step': 'clustering',
         'description':
             """
             Maximum number of spikes per chunk when assigning cluster identities
             in the graph-clustering step (`clustering_qr.assign_iclust`). The
-            default (None) builds the full (n_spikes x n_clusters) assignment
-            matrix in one shot, which can exhaust GPU memory for very long
-            recordings (tens of millions of spikes per clustering center). When
-            set, the assignment is computed in row chunks of this size, bounding
-            peak memory to roughly one (chunk x n_clusters) tile. The clustering
-            result is identical to the unchunked path.
+            (n_spikes x n_clusters) assignment matrix is computed in row chunks
+            of this size, which bounds peak memory to roughly one
+            (chunk x n_clusters) tile. The clustering result does not depend on
+            this value. If None, the full matrix is built in one shot, which can
+            exhaust GPU memory for long recordings (millions of spikes per
+            clustering center).
             """
     },
 
